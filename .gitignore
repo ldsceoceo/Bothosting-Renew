@@ -1,9 +1,0 @@
-# 录制文件（含真实 cookie / session_token / PAT，明文凭证，绝不提交）
-agens/
-agentscribe-*.js
-agentscribe-*.json
-slim-storage-state.json
-storage-state*.json
-*.png
-screenshots/
-新建文本文档.txt

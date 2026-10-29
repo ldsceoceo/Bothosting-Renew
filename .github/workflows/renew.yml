@@ -36,21 +36,16 @@ jobs:
 
       - name: 🚀 运行续期脚本（多账号）
         env:
-          # 旧单账号（兼容保留）
+          # 旧单账号（兼容保留，无编号时按单账号跑）
           EMAIL: ${{ secrets.EMAIL }}
-          SESSION_TOKEN: ${{ secrets.SESSION_TOKEN }}
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          PASSWORD: ${{ secrets.PASSWORD }}
           # 多账号（按需填写 _1/_2/_3，可自行扩展到 _10）
           EMAIL_1: ${{ secrets.EMAIL_1 }}
-          SESSION_TOKEN_1: ${{ secrets.SESSION_TOKEN_1 }}
-          DISCORD_TOKEN_1: ${{ secrets.DISCORD_TOKEN_1 }}
+          PASSWORD_1: ${{ secrets.PASSWORD_1 }}
           EMAIL_2: ${{ secrets.EMAIL_2 }}
-          SESSION_TOKEN_2: ${{ secrets.SESSION_TOKEN_2 }}
-          DISCORD_TOKEN_2: ${{ secrets.DISCORD_TOKEN_2 }}
+          PASSWORD_2: ${{ secrets.PASSWORD_2 }}
           EMAIL_3: ${{ secrets.EMAIL_3 }}
-          SESSION_TOKEN_3: ${{ secrets.SESSION_TOKEN_3 }}
-          DISCORD_TOKEN_3: ${{ secrets.DISCORD_TOKEN_3 }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PASSWORD_3: ${{ secrets.PASSWORD_3 }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |

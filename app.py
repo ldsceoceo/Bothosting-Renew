@@ -144,10 +144,32 @@ def diag_turnstile_dom(sb, errors=None):
 #  页面注入脚本
 # Turnstile token（官方 JS 接口 或 表单隐藏域），未通过时为空串
 TURNSTILE_TOKEN_JS = """
-try { if (window.turnstile && window.turnstile.getResponse) {
-        var t = window.turnstile.getResponse(); if (t) return t; } } catch (e) {}
-var el = document.querySelector('input[name="cf-turnstile-response"]');
-return el ? (el.value || '') : '';
+function val(el) { return el ? String(el.value || '') : ''; }
+var dlg = document.querySelector('div[role="dialog"]');
+var t = dlg ? val(dlg.querySelector('input[name="cf-turnstile-response"]')) : '';
+if (!t) { try { if (window.turnstile && window.turnstile.getResponse) { t = window.turnstile.getResponse() || ''; } } catch (e) {} }
+if (!t) {
+    var all = document.querySelectorAll('input[name="cf-turnstile-response"]');
+    for (var i = all.length - 1; i >= 0; i--) { t = val(all[i]); if (t) break; }
+}
+return t || '';
+"""
+
+# 弹窗确认按钮解锁状态（Turnstile 未过时站点会禁用按钮并提示 Complete the bot check to unlock）
+DIALOG_BTN_JS = """
+var root = document.querySelector('div[role="dialog"]');
+if (!root) return null;
+var btns = root.querySelectorAll('button');
+for (var i = 0; i < btns.length; i++) {
+    var b = btns[i], r = b.getBoundingClientRect();
+    if (r.width < 40 || r.height < 16) continue;
+    var t = (b.innerText || b.textContent || '').trim();
+    if (!/renew|confirm|yes/i.test(t)) continue;
+    var cls = (typeof b.className === 'string') ? b.className : '';
+    var dis = b.disabled || b.getAttribute('aria-disabled') === 'true' || /disabled/i.test(cls);
+    return {text: t.slice(0, 80), disabled: !!dis};
+}
+return null;
 """
 
 TURNSTILE_EXISTS_JS = """
@@ -247,7 +269,9 @@ def _xdotool_click(x: int, y: int):
 
 def turnstile_token(sb) -> str:
     token = js(sb, TURNSTILE_TOKEN_JS, "")
-    return token if isinstance(token, str) else ""
+    token = token if isinstance(token, str) else ""
+    # CF 票据长度通常在数百字符；短串多为残留/空占位，不算通过
+    return token if len(token) >= 20 else ""
 
 
 def _click_turnstile(sb, locate_timeout=10) -> bool:
@@ -266,13 +290,16 @@ def _click_turnstile(sb, locate_timeout=10) -> bool:
 
     try:
         wi = js(sb, "return '' + (window.screenX || 0) + '|' + (window.screenY || 0) + '|' +"
-                    " window.outerHeight + '|' + window.innerHeight;", "")
+                    " window.outerHeight + '|' + window.innerHeight + '|' +"
+                    " (window.devicePixelRatio || 1);", "")
         parts = str(wi).split("|")
-        sx, sy = int(parts[0] or 0), int(parts[1] or 0)
-        bar = int(parts[2] or 800) - int(parts[3] or 768)
-        ax = int(coords["cx"]) + sx
-        ay = int(coords["cy"]) + sy + bar
-        print(f"🖱️ 底层点击 Turnstile ({ax}, {ay})")
+        sx, sy = int(float(parts[0] or 0)), int(float(parts[1] or 0))
+        bar = int(float(parts[2] or 800)) - int(float(parts[3] or 768))
+        # Windows 高 DPI 下 SetCursorPos 用物理像素，需乘 devicePixelRatio
+        dpr = float(parts[4] or 1) if os.name == "nt" else 1.0
+        ax = int(round((int(coords["cx"]) + sx) * dpr))
+        ay = int(round((int(coords["cy"]) + sy + bar) * dpr))
+        print(f"🖱️ 底层点击 Turnstile ({ax}, {ay}) dpr={dpr}")
         _xdotool_click(ax, ay)
         time.sleep(3)
         return True
@@ -282,17 +309,31 @@ def _click_turnstile(sb, locate_timeout=10) -> bool:
 
 
 def click_turnstile(sb) -> bool:
-    if _click_turnstile(sb):
-        return True
     coords = js(sb, TS_COORDS_JS)
+    # 优先 CDP 点击：直接用 CSS 坐标，不受窗口边框/DPI 影响
     if coords:
         try:
             if hasattr(sb, "cdp") and hasattr(sb.cdp, "gui_click_x_y"):
-                print(f"🖱️ 坐标点击 Turnstile ({coords['cx']},{coords['cy']})")
+                print(f"🖱️ CDP 坐标点击 Turnstile ({coords['cx']},{coords['cy']})")
                 sb.cdp.gui_click_x_y(int(coords["cx"]), int(coords["cy"]))
-                return True
+                time.sleep(2)
+                if turnstile_token(sb):
+                    return True
         except Exception as e:
-            print(f"⚠️ 坐标点击失败: {e}")
+            print(f"⚠️ CDP 坐标点击失败: {e}")
+    # SeleniumBase 自带的验证框点击（PyAutoGUI 真实鼠标）
+    try:
+        if hasattr(sb, "uc_gui_click_captcha"):
+            print("🖱️ 调用 uc_gui_click_captcha ...")
+            sb.uc_gui_click_captcha()
+            time.sleep(2)
+            if turnstile_token(sb):
+                return True
+    except Exception as e:
+        print(f"⚠️ uc_gui_click_captcha 失败: {e}")
+    # OS 底层点击兜底
+    if _click_turnstile(sb):
+        return True
     try:
         if hasattr(sb, "cdp") and hasattr(sb.cdp, "click_captcha"):
             print("🖱️ 兜底调用cdp点击 ...")
@@ -348,6 +389,23 @@ def probe_turnstile_solved(sb) -> bool:
         except Exception:
             pass
         return False
+
+
+# 等弹窗确认按钮解锁（Turnstile 未过时按钮 disabled），期间周期性补点验证框
+def wait_dialog_button_unlocked(sb, tag, timeout=45) -> tuple:
+    deadline = time.time() + timeout
+    state = None
+    tries = 0
+    while time.time() < deadline:
+        state = js(sb, DIALOG_BTN_JS, None)
+        if state and not state.get("disabled"):
+            return True, state.get("text", "")
+        tries += 1
+        if tries % 3 == 0:
+            print(f"{tag} 🔁 按钮仍锁定，补点 Turnstile ...")
+            click_turnstile(sb)
+        time.sleep(2)
+    return False, (state or {}).get("text", "")
 
 
 # 获取当前出口ip
@@ -676,6 +734,19 @@ def renew_one_account(sb, acct) -> dict:
         # 点击弹窗确认（多选择器：eooce 实测的 dialog+btn-primary 优先，录制选择器兜底）
         print(f"{tag} ⏳ 等待续期按钮可用并点击...")
         time.sleep(5)
+        unlocked, btn_text = wait_dialog_button_unlocked(sb, tag, timeout=45)
+        if not unlocked:
+            print(f"{tag} ❌ 弹窗按钮仍锁定（bot check 未完成），按钮文案: {btn_text!r}")
+            try:
+                sb.save_screenshot(f"modal_locked_{idx}.png")
+            except Exception:
+                pass
+            send_telegram_message(format_notification(
+                "❌ 续期失败", email=email,
+                error="弹窗按钮未解锁（Turnstile/bot check 未完成，自动续期被站点拦截）"))
+            result["summary"] = "❌ 续期失败（按钮未解锁）"
+            return result
+        print(f"{tag} 🔓 弹窗按钮已解锁: {btn_text!r}")
         modal_selectors = [
             'div[role="dialog"] button.btn-primary',
             '#renew-dialog button.inline-flex.w-full',
@@ -711,6 +782,13 @@ def renew_one_account(sb, acct) -> dict:
 
         # 轮询确认结果（60s）：等倒计时或日期变化
         print(f"{tag} ⏳ 等待新的过期时间（轮询60s）...")
+        try:
+            sb.sleep(5)
+            sb.refresh()
+            sb.wait_for_ready_state_complete()
+            sb.sleep(3)
+        except Exception as e:
+            print(f"{tag} ⚠️ 刷新账单页失败: {e}")
         new_expiry = None
         new_countdown = None
         deadline = time.time() + 60

@@ -385,7 +385,7 @@ def normalize_date(date_str: str) -> str:
     return date_str
 
 
-DATE_RE = r"(\d{4}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/\d{4})"
+DATE_RE = r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{4}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
 
 
 # 获取过期日期
@@ -550,13 +550,13 @@ def login_with_password(sb, acct, tag) -> bool:
         print(f"{tag} 🖱️ 提交登录按钮")
         sb.sleep(6)
         sb.wait_for_ready_state_complete()
-        sb.open(f"{BASE_URL}/a/billings")
+        sb.open(f"{BASE_URL}/dash/billings")
         sb.wait_for_ready_state_complete()
         sb.sleep(3)
         current_url = sb.get_current_url()
         print(f"{tag} 📝 当前URL: {current_url}, Title: {sb.get_title()}")
 
-        if "/a/billings" in current_url and "/login" not in current_url and "error=" not in current_url:
+        if "/dash/billings" in current_url and "/login" not in current_url and "error=" not in current_url:
             print(f"{tag} ✅ 密码登录成功,当前已到达账单页")
             return True
         print(f"{tag} ❌ 密码登录后仍未到达账单页，当前URL: {current_url}")
@@ -605,8 +605,10 @@ def renew_one_account(sb, acct) -> dict:
     outer_renew_selector = None
     countdown_text = None
     possible_selectors = [
-        'button:contains("Renew")',
+        'type:button("Renew free plan")',
         'button:contains("Renew free plan")',
+        '[class*="btn btn-primary btn-sm"]',
+        'button:contains("Renew")',
         'a:contains("Renew")',
         '[class*="renew"]',
         '[class*="Renew"]',
